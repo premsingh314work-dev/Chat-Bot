@@ -24,37 +24,45 @@ class ChatBot:
         self.temp = temp
         self.max_tokens = max_tokens
         self.max_history_turns = max_history_turns
-        self.history: List[BaseMessage] = []
-        self.system_prompt = """You are a helpful assistant. Give concise, direct answers.
-         "If the question is ambiguous, ask a short clarifying question first."
+        self.sessions: Dict[str,List[BaseMessage]] ={}
+        # self.history: List[BaseMessage] = []
+        self.system_prompt = """
+            "You are a helpful assistant. Give concise, direct answers."
+            "If the question is ambiguous, ask a short clarifying question first."
+            "If a question needs real-time information you don't have, say so briefly."
          """
 
         self.llm = ChatGroq(api_key=self.api_key, model=self.model_name, temperature=self.temp, max_tokens=self.max_tokens)
 
-    def _recent_history(self) -> List[BaseMessage]:
-        # each turn = 2 messages (human + AI), so keep the last N turns
-        return self.history[-2 * self.max_history_turns:]
+    def _get_history(self,session_id:str)-> List[BaseMessage]:
+        return self.sessions.setdefault(session_id,[])
+    
+    def _recent_history(self,session_id:str) -> List[BaseMessage]:
+        history:List[BaseMessage]= self._get_history(session_id) 
+        return history[-2 * self.max_history_turns:] # each turn = 2 messages (human + AI), so keep the last N turns
+     
 
-    def ask(self, query: str) -> str:
-        messages = [
+    def ask(self, query: str, session_id:str= "default") -> str:
+        messages = [    
             SystemMessage(self.system_prompt),
-            *self._recent_history(),
+            *self._recent_history(session_id),
             HumanMessage(query),
         ]
         result = self.llm.invoke(messages)   # result is the full AIMessage
 
         # Save the real response so metadata (and tool_calls later) is kept
-        self.history.append(HumanMessage(query))
-        self.history.append(result)
-
+        history = self._get_history(session_id)
+        history.append(HumanMessage(query))
+        history.append(result)
+        
         if result.response_metadata.get("finish_reason") == "length":
             print("Warning: answer was cut off. Increase max_tokens.")
         print("token usage:", result.usage_metadata)
 
         return result.content                # callers just get the text
 
-    def reset(self) -> None:
-        self.history.clear()
+    def reset(self, session_id: str = "default") -> None:
+        self.sessions.pop(session_id, None)
 
 
 if __name__ == "__main__":
